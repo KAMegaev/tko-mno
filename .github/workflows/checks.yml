@@ -1,0 +1,24 @@
+name: Проверки
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci || npm install
+      - run: npx playwright install --with-deps chromium
+      - name: Прогон расчёта в Node
+        run: OUT=/tmp/out.xlsx node tools/run.mjs
+      - name: Сквозная проверка в браузере
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 &
+          sleep 2
+          OUT=/tmp/e2e.xlsx node tools/e2e.mjs

@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Расчёт мест накопления отходов</title>
+<meta name="description" content="Агрегация реестра мест накопления ТКО по муниципальным образованиям и заполнение шаблона приложения 8.2.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♻️</text></svg>">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <h1>Расчёт мест накопления отходов</h1>
+    <p class="lede">Сводит выгрузку реестра МНО по муниципальным образованиям и заполняет шаблон приложения 8.2.
+      Файлы обрабатываются прямо в браузере и никуда не отправляются.</p>
+  </div>
+</header>
+
+<nav class="stepper wrap" aria-label="Этапы">
+  <ol>
+    <li data-nav="1" class="is-current"><span class="num">1</span><span class="name">Файлы</span></li>
+    <li data-nav="2"><span class="num">2</span><span class="name">Столбцы</span></li>
+    <li data-nav="3"><span class="num">3</span><span class="name">Муниципальные образования</span></li>
+    <li data-nav="4"><span class="num">4</span><span class="name">Результат</span></li>
+  </ol>
+</nav>
+
+<main class="wrap">
+
+  <!-- Шаг 1 ─────────────────────────────────────────────────────────────── -->
+  <section class="step is-current" data-step="1">
+    <h2>Шаг 1. Загрузите два файла</h2>
+    <div class="drops">
+      <label class="drop" data-drop="registry">
+        <input type="file" accept=".xlsx,.xlsm" hidden>
+        <span class="drop-kind">Исходные данные</span>
+        <span class="drop-title">Выгрузка реестра мест накопления отходов</span>
+        <span class="drop-hint">Перетащите файл .xlsx или нажмите, чтобы выбрать</span>
+        <span class="drop-file"></span>
+      </label>
+      <label class="drop" data-drop="template">
+        <input type="file" accept=".xlsx,.xlsm,.xltx" hidden>
+        <span class="drop-kind">Шаблон для заполнения</span>
+        <span class="drop-title">Приложение 8.2</span>
+        <span class="drop-hint">Перетащите файл .xlsx или нажмите, чтобы выбрать</span>
+        <span class="drop-file"></span>
+      </label>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn btn-primary" id="btn-parse" disabled>Разобрать файлы</button>
+      <button type="button" class="btn btn-ghost" id="btn-reset">Начать заново</button>
+    </div>
+    <div class="notice" id="parse-error" hidden></div>
+  </section>
+
+  <!-- Шаг 2 ─────────────────────────────────────────────────────────────── -->
+  <section class="step" data-step="2">
+    <h2>Шаг 2. Проверьте распознанные столбцы</h2>
+    <p class="hint">Программа сопоставила столбцы шаблона со столбцами реестра. Проверьте и при
+      необходимости поправьте — списки содержат все столбцы соответствующего файла.</p>
+
+    <div class="cards">
+      <div class="card">
+        <h3>Шаблон <span class="badge" id="tpl-sheet"></span></h3>
+        <table class="grid" id="tpl-columns"><tbody></tbody></table>
+      </div>
+      <div class="card">
+        <h3>Реестр <span class="badge" id="reg-sheet"></span></h3>
+        <table class="grid" id="reg-columns"><tbody></tbody></table>
+      </div>
+    </div>
+
+    <fieldset class="card options">
+      <legend>Контейнеры без разбивки по группам</legend>
+      <p class="hint" id="unclassified-note"></p>
+      <label><input type="radio" name="unclassified" value="mixed" checked> Отнести к «Смешанные ТКО»</label>
+      <label><input type="radio" name="unclassified" value="other"> Отнести к «Иное»</label>
+      <label><input type="radio" name="unclassified" value="drop"> Не учитывать</label>
+    </fieldset>
+
+    <div class="actions">
+      <button type="button" class="btn btn-primary" id="btn-to-mo">Далее: муниципальные образования</button>
+      <button type="button" class="btn btn-ghost" id="btn-ai-columns">Уточнить с помощью ИИ</button>
+      <button type="button" class="btn btn-ghost" data-goto="1">Назад</button>
+    </div>
+    <div class="notice" id="columns-error" hidden></div>
+  </section>
+
+  <!-- Шаг 3 ─────────────────────────────────────────────────────────────── -->
+  <section class="step" data-step="3">
+    <h2>Шаг 3. Соответствие муниципальных образований</h2>
+    <div id="mo-summary" class="summary"></div>
+
+    <div class="table-scroll">
+      <table class="grid grid-mo">
+        <thead>
+          <tr>
+            <th>Наименование в реестре</th>
+            <th class="num">Строк</th>
+            <th>Строка шаблона</th>
+            <th>Как определено</th>
+          </tr>
+        </thead>
+        <tbody id="mo-rows"></tbody>
+      </table>
+    </div>
+
+    <details class="card" id="mo-missing-box" hidden>
+      <summary>Строки шаблона без данных в реестре (<span id="mo-missing-count">0</span>)</summary>
+      <ul id="mo-missing"></ul>
+    </details>
+
+    <div class="actions">
+      <button type="button" class="btn btn-primary" id="btn-build">Подтвердить и собрать файл</button>
+      <button type="button" class="btn btn-ghost" id="btn-ai-mo">Уточнить с помощью ИИ</button>
+      <button type="button" class="btn btn-ghost" data-goto="2">Назад</button>
+    </div>
+    <div class="notice" id="mo-error" hidden></div>
+  </section>
+
+  <!-- Шаг 4 ─────────────────────────────────────────────────────────────── -->
+  <section class="step" data-step="4">
+    <h2>Шаг 4. Готовый файл и отчёт</h2>
+
+    <div class="actions actions-lead">
+      <button type="button" class="btn btn-primary" id="btn-save">Сохранить файл…</button>
+      <button type="button" class="btn btn-ghost" id="btn-copy-report">Скопировать отчёт</button>
+      <button type="button" class="btn btn-ghost" id="btn-save-report">Скачать отчёт (.txt)</button>
+      <button type="button" class="btn btn-ghost" data-goto="3">Назад к соответствиям</button>
+    </div>
+    <p class="hint" id="save-hint"></p>
+
+    <div class="card">
+      <h3>Контрольные суммы</h3>
+      <table class="grid grid-controls"><tbody id="controls"></tbody></table>
+    </div>
+
+    <div class="card">
+      <h3>Отчёт о проблемах</h3>
+      <ul class="problems" id="problems"></ul>
+    </div>
+
+    <div class="card">
+      <h3>Что записано в шаблон</h3>
+      <dl class="facts" id="facts"></dl>
+    </div>
+  </section>
+</main>
+
+<!-- Панель ИИ ─────────────────────────────────────────────────────────────-->
+<dialog id="ai-dialog">
+  <form method="dialog" class="ai-form">
+    <h3>Помощник на Claude</h3>
+    <p class="hint">Необязательный шаг. Ключ хранится только в этой вкладке и отправляется
+      напрямую в api.anthropic.com. Ключ должен допускать обращения из браузера.</p>
+    <label>API-ключ Anthropic
+      <input type="password" id="ai-key" placeholder="sk-ant-..." autocomplete="off">
+    </label>
+    <label>Модель
+      <select id="ai-model"></select>
+    </label>
+    <div class="actions">
+      <button class="btn btn-primary" value="run" id="ai-run">Запустить</button>
+      <button class="btn btn-ghost" value="cancel">Отмена</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+
+<footer class="wrap site-footer">
+  <p>Все вычисления выполняются в браузере: загруженные файлы не покидают компьютер.
+     Исходный код — <a href="https://github.com/KAMegaev/tko-mno">github.com/KAMegaev/tko-mno</a>.</p>
+</footer>
+
+<script src="src/vendor/fflate.umd.js"></script>
+<script type="module" src="src/ui/app.js"></script>
+</body>
+</html>
