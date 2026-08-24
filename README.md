@@ -95,5 +95,16 @@ tools/                прогон в Node, сквозная проверка, �
 ## Публикация
 
 Сайт разворачивается на GitHub Pages автоматически при push — workflow
-`.github/workflows/pages.yml`. Один раз нужно включить Pages в настройках
-репозитория: **Settings → Pages → Source → GitHub Actions**.
+`.github/workflows/pages.yml`.
+
+**Один раз нужно включить Pages вручную.** Токен, которым работает workflow,
+не имеет прав создавать сайт Pages, поэтому первый запуск падает с
+`Create Pages site failed: Resource not accessible by integration`. Порядок:
+
+1. Откройте **Settings → Pages** в репозитории.
+2. В разделе **Build and deployment** выберите **Source: GitHub Actions**.
+3. Перезапустите workflow: **Actions → «Публикация на GitHub Pages» → Re-run jobs**
+   (или сделайте любой push).
+
+После этого сайт будет доступен по адресу https://kamegaev.github.io/tko-mno/
+и обновляться при каждом push.
