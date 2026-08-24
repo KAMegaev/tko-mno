@@ -3,11 +3,15 @@ import { chromium } from 'playwright';
 import { writeFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+// Путь к Chromium: в CI используется браузер, установленный playwright,
+// локально можно указать свой через PW_CHROMIUM.
+const launchOptions = process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {};
+
 const BASE = process.env.BASE || 'http://127.0.0.1:8765';
 const OUT = process.env.OUT || '/tmp/e2e-out.xlsx';
 const root = path.resolve('.');
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+const browser = await chromium.launch(launchOptions);
 const page = await browser.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));

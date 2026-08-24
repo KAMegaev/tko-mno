@@ -1,8 +1,12 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
+
+// Путь к Chromium: в CI используется браузер, установленный playwright,
+// локально можно указать свой через PW_CHROMIUM.
+const launchOptions = process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {};
 const root = path.resolve('.');
 const dir = process.env.SHOTS || '/tmp/shots';
-const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+const b = await chromium.launch(launchOptions);
 const p = await b.newPage({ viewport: { width: 1180, height: 900 }, deviceScaleFactor: 2 });
 await p.goto(process.env.BASE || 'http://127.0.0.1:8765', { waitUntil: 'networkidle' });
 await p.screenshot({ path: `${dir}/1-files.png` });
