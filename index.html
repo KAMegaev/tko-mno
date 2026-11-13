@@ -15,7 +15,7 @@
     <div class="brand-copy">
       <h1>Расчёт мест накопления отходов</h1>
       <p class="lede">Сводит выгрузку реестра МНО по муниципальным образованиям и заполняет шаблон приложения 8.2.
-        Файлы обрабатываются прямо в браузере и никуда не отправляются.</p>
+        Файлы обрабатываются на сервере и удаляются через 30 минут. Готовый результат скачивается на компьютер.</p>
     </div>
   </div>
 </header>
@@ -50,6 +50,7 @@
         <span class="drop-file"></span>
       </label>
     </div>
+    <p class="hint" id="ai-status" role="status">Проверяем подключение ИИ к серверу…</p>
     <div class="actions">
       <button type="button" class="btn btn-primary" id="btn-parse" disabled>Разобрать файлы</button>
       <button type="button" class="btn btn-ghost" id="btn-reset">Начать заново</button>
@@ -151,33 +152,13 @@
   </section>
 </main>
 
-<!-- Панель ИИ ─────────────────────────────────────────────────────────────-->
-<dialog id="ai-dialog">
-  <form method="dialog" class="ai-form">
-    <h3>Помощник на Claude</h3>
-    <p class="hint">Необязательный шаг. Ключ хранится только в этой вкладке и отправляется
-      напрямую в api.anthropic.com. Ключ должен допускать обращения из браузера.</p>
-    <label>API-ключ Anthropic
-      <input type="password" id="ai-key" placeholder="sk-ant-..." autocomplete="off">
-    </label>
-    <label>Модель
-      <select id="ai-model"></select>
-    </label>
-    <div class="actions">
-      <button class="btn btn-primary" value="run" id="ai-run">Запустить</button>
-      <button class="btn btn-ghost" value="cancel">Отмена</button>
-    </div>
-  </form>
-</dialog>
-
 <div class="toast" id="toast" hidden></div>
 
 <footer class="wrap site-footer">
-  <p>Все вычисления выполняются в браузере: загруженные файлы не покидают компьютер.
+  <p>Файлы передаются по HTTPS на сервер сайта. В ИИ отправляются только заголовки столбцов и наименования муниципальных образований.
      Исходный код — <a href="https://github.com/KAMegaev/tko-mno">github.com/KAMegaev/tko-mno</a>.</p>
 </footer>
 
-<script src="src/vendor/fflate.umd.js"></script>
 <script type="module" src="src/ui/app.js"></script>
 </body>
 </html>

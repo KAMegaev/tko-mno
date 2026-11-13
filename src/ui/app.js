@@ -1,12 +1,9 @@
 // Связка интерфейса: загрузка → столбцы → соответствия → сборка файла.
-import { readWorkbook, indexToCol } from '../xlsx/read.js';
-import { analyzeTemplate, analyzeRegistry, templateRules, registryRules } from '../core/detect.js';
-import { collectRegistryNames, buildMatching, missingTemplateRows, unlinkedRegistryNames } from '../core/match.js';
-import { aggregate, UNCLASSIFIED_MODES } from '../core/aggregate.js';
+import { indexToCol } from '../xlsx/read.js';
+import { templateRules, registryRules } from '../core/detect.js';
+import { UNCLASSIFIED_MODES } from '../core/aggregate.js';
 import { plural } from '../core/text.js';
-import { buildOutput } from '../core/build.js';
-import { buildReport, reportToText } from '../core/report.js';
-import { MODELS, suggestColumns, suggestMatches } from '../ai/anthropic.js';
+import { api, suggestColumns, suggestMatches } from '../ai/client.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -18,7 +15,7 @@ const state = {
   tpl: null, reg: null,
   links: [], mode: 'mixed',
   agg: null, output: null, report: null,
-  ai: { apiKey: sessionStorage.getItem('anthropicKey') || '', model: MODELS[0].id },
+  ai: {}, sessionId: null, reportText: '',
   aiTarget: null,
   step: 1,
 };
@@ -75,6 +72,10 @@ function bindDrop(el) {
       showError('#parse-error', `Файл «${file.name}» не в формате .xlsx — старый формат .xls не поддерживается, пересохраните его в Excel.`);
       return;
     }
+    if (file.size > 12 * 1048576) {
+      showError('#parse-error', 'Каждый файл должен быть не больше 12 МБ.');
+      return;
+    }
     showError('#parse-error', '');
     state.files[kind] = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
     el.classList.add('is-set');
@@ -91,29 +92,36 @@ function bindDrop(el) {
   });
 }
 
+function encodeFile(file) {
+  let binary = '';
+  for (let i = 0; i < file.bytes.length; i += 32768) binary += String.fromCharCode(...file.bytes.subarray(i, i + 32768));
+  return { name: file.name, data: btoa(binary) };
+}
+
+function selectedColumns() {
+  return Object.fromEntries([['template', state.tpl], ['registry', state.reg]].map(([kind, info]) =>
+    [kind, Object.fromEntries(Object.entries(info.columns).map(([role, c]) => [role, c.index]))]));
+}
+
 async function parseFiles() {
   showError('#parse-error', '');
   try {
-    state.templateWb = readWorkbook(state.files.template.bytes);
-    state.registryWb = readWorkbook(state.files.registry.bytes);
-  } catch (e) {
-    showError('#parse-error', 'Не удалось прочитать файл: ' + e.message);
-    return;
+    if (state.sessionId) await api('reset', {}, state.sessionId).catch(() => {});
+    state.sessionId = null;
+    const data = await api('files', {
+      template: encodeFile(state.files.template),
+      registry: encodeFile(state.files.registry),
+    });
+    state.sessionId = data.sessionId;
+    state.tpl = data.tpl;
+    state.reg = data.reg;
+    state.output = null;
+    state.report = null;
+    renderColumns();
+    setStep(2);
+  } catch (error) {
+    showError('#parse-error', error.message);
   }
-  try {
-    state.tpl = analyzeTemplate(state.templateWb);
-  } catch (e) {
-    showError('#parse-error', 'Шаблон: ' + e.message);
-    return;
-  }
-  try {
-    state.reg = analyzeRegistry(state.registryWb);
-  } catch (e) {
-    showError('#parse-error', 'Реестр: ' + e.message);
-    return;
-  }
-  renderColumns();
-  setStep(2);
 }
 
 // ── Шаг 2. Столбцы ──────────────────────────────────────────────────────────
@@ -174,49 +182,18 @@ function renderColumns() {
     + 'Точное количество таких строк показано в отчёте на последнем шаге.';
 }
 
-/** Строки шаблона могли быть определены по другому столбцу — пересобираем. */
-function rebuildTemplateEntries() {
-  const { tpl } = state;
-  const moIndex = tpl.columns.mo.index;
-  if (moIndex < 0 || moIndex === tpl.entries.moIndexUsed) return;
-  const subjectIndex = tpl.columns.subject.index;
-  const rows = tpl.sheet.rows;
-  const entries = [];
-  let gap = 0;
-  for (let r = tpl.dataFrom; r < rows.length; r++) {
-    const value = rows[r]?.[moIndex];
-    if (value === undefined || value === null || String(value).trim() === '') {
-      if (++gap > 5) break;
-      continue;
-    }
-    gap = 0;
-    const name = String(value).trim();
-    if (/^(итого|итог|всего)$/i.test(name)) { tpl.existingTotalRow = r + 1; continue; }
-    entries.push({
-      rowIndex: r, excelRow: r + 1,
-      subject: subjectIndex >= 0 ? (rows[r]?.[subjectIndex] ?? '') : '',
-      name,
-    });
-  }
-  if (entries.length) {
-    entries.moIndexUsed = moIndex;
-    tpl.entries = entries;
-    tpl.firstDataExcelRow = entries[0].excelRow;
-    tpl.lastDataExcelRow = entries[entries.length - 1].excelRow;
-  }
-}
-
-// ── Шаг 3. Соответствие МО ──────────────────────────────────────────────────
-function prepareMatching() {
-  rebuildTemplateEntries();
-  const { reg, tpl } = state;
-  if (reg.columns.mo.index < 0) {
-    showError('#columns-error', 'Не выбран столбец с муниципальным образованием в реестре.');
+// ── Шаг 3. Серверное сопоставление МО ────────────────────────────────────────
+async function prepareMatching() {
+  try {
+    const data = await api('match', { columns: selectedColumns() }, state.sessionId);
+    state.tpl = data.tpl;
+    state.reg = data.reg;
+    state.links = data.links;
+    return true;
+  } catch (error) {
+    showError('#columns-error', error.message);
     return false;
   }
-  const names = collectRegistryNames(reg.sheet.rows, reg.dataFrom, reg.columns.mo.index);
-  state.links = buildMatching(tpl.entries, names).links;
-  return true;
 }
 
 function renderMo() {
@@ -317,22 +294,19 @@ function renderMo() {
 }
 
 // ── Шаг 4. Сборка ───────────────────────────────────────────────────────────
-function build() {
-  const { reg, tpl, links } = state;
+async function build() {
   state.mode = $('input[name="unclassified"]:checked').value;
-  const map = new Map(links.map((l) => [l.registryName, l.templateIndex]));
-  state.agg = aggregate(reg.sheet.rows, reg, tpl.entries, map, { unclassified: state.mode });
-  state.output = buildOutput(state.templateWb, tpl, state.agg);
-
-  const hits = new Map();
-  for (const l of links) if (l.templateIndex !== null) hits.set(l.templateIndex, true);
-  state.report = buildReport({
-    templateInfo: tpl, registryInfo: reg, links,
-    missing: missingTemplateRows(tpl.entries, hits),
-    unlinked: unlinkedRegistryNames(links),
-    agg: state.agg, output: state.output,
-    files: { templateName: state.files.template.name, registryName: state.files.registry.name },
-  });
+  const data = await api('build', { columns: selectedColumns(), links: state.links, mode: state.mode }, state.sessionId);
+  const response = await fetch('/api/result', { headers: { 'x-mno-session': state.sessionId } });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Не удалось скачать результат с сервера');
+  }
+  state.tpl = data.tpl;
+  state.agg = data.agg;
+  state.output = { ...data.output, bytes: new Uint8Array(await response.arrayBuffer()) };
+  state.report = data.report;
+  state.reportText = data.reportText;
   renderReport();
   setStep(4);
 }
@@ -462,29 +436,22 @@ async function saveFile(bytes, name, mime) {
   toast(`Файл отправлен в загрузки: ${fallbackName}`);
 }
 
-// ── Помощник на Claude ──────────────────────────────────────────────────────
+// ── Помощник OpenAI через сервер сайта ──────────────────────────────────────
 function openAi(target) {
   state.aiTarget = target;
-  const select = $('#ai-model');
-  if (!select.options.length) for (const m of MODELS) select.append(new Option(m.label, m.id));
-  select.value = state.ai.model;
-  $('#ai-key').value = state.ai.apiKey;
-  $('#ai-dialog').showModal();
+  const button = $(target === 'columns' ? '#btn-ai-columns' : '#btn-ai-mo');
+  return withBusy(button, 'Запрос к ИИ…', runAi);
 }
 
 async function runAi() {
-  state.ai.apiKey = $('#ai-key').value.trim();
-  state.ai.model = $('#ai-model').value;
-  if (state.ai.apiKey) sessionStorage.setItem('anthropicKey', state.ai.apiKey);
+  state.ai = { sessionId: state.sessionId, columns: selectedColumns() };
   const target = state.aiTarget;
   const errorSel = target === 'columns' ? '#columns-error' : '#mo-error';
   try {
     if (target === 'columns') {
       toast('Спрашиваю модель про столбцы…');
-      const [tplRes, regRes] = await Promise.all([
-        suggestColumns(state.ai, { titles: state.tpl.titles, roles: templateRules, what: 'шаблон приложения 8.2 для сведений о местах накопления ТКО' }),
-        suggestColumns(state.ai, { titles: state.reg.titles, roles: registryRules, what: 'выгрузка реестра мест накопления отходов' }),
-      ]);
+      const tplRes = await suggestColumns(state.ai, { what: 'шаблон МНО' });
+      const regRes = await suggestColumns(state.ai, { what: 'выгрузка реестра' });
       let applied = 0;
       const apply = (info, res, titles) => {
         for (const r of res) {
@@ -540,18 +507,21 @@ async function runAi() {
 $$('.drop').forEach(bindDrop);
 
 $('#btn-parse').addEventListener('click', (e) => withBusy(e.currentTarget, 'Читаю файлы…', parseFiles));
-$('#btn-reset').addEventListener('click', () => location.reload());
+$('#btn-reset').addEventListener('click', async () => {
+  if (state.sessionId) await api('reset', {}, state.sessionId).catch(() => {});
+  location.reload();
+});
 $$('[data-goto]').forEach((b) => b.addEventListener('click', () => setStep(Number(b.dataset.goto))));
 
 $('#btn-to-mo').addEventListener('click', (e) => withBusy(e.currentTarget, 'Сверяю наименования…', async () => {
-  if (!prepareMatching()) return;
+  if (!await prepareMatching()) return;
   renderMo();
   setStep(3);
 }));
 
 $('#btn-build').addEventListener('click', (e) => withBusy(e.currentTarget, 'Собираю файл…', async () => {
   try {
-    build();
+    await build();
   } catch (err) {
     showError('#mo-error', 'Не удалось собрать файл: ' + err.message);
   }
@@ -563,13 +533,13 @@ $('#btn-save').addEventListener('click', () => saveFile(
 ));
 
 $('#btn-save-report').addEventListener('click', () => saveFile(
-  new TextEncoder().encode('﻿' + reportToText(state.report, { links: state.links })),
+  new TextEncoder().encode('\uFEFF' + state.reportText),
   'Отчёт о сборке.txt', 'text/plain;charset=utf-8',
 ));
 
 $('#btn-copy-report').addEventListener('click', async () => {
   try {
-    await navigator.clipboard.writeText(reportToText(state.report, { links: state.links }));
+    await navigator.clipboard.writeText(state.reportText);
     toast('Отчёт скопирован');
   } catch {
     toast('Браузер не дал доступ к буферу обмена');
@@ -578,8 +548,16 @@ $('#btn-copy-report').addEventListener('click', async () => {
 
 $('#btn-ai-columns').addEventListener('click', () => openAi('columns'));
 $('#btn-ai-mo').addEventListener('click', () => openAi('mo'));
-$('#ai-dialog').addEventListener('close', (e) => {
-  if (e.target.returnValue === 'run') runAi();
-});
+// Старый ключ из прежней версии больше не используется.
+sessionStorage.removeItem('anthropicKey');
+fetch('/api/config').then(async response => {
+  if (!response.ok) throw new Error('Сервер недоступен');
+  const config = await response.json();
+  $('#ai-status').textContent = config.aiReady
+    ? 'ИИ: OpenAI через сервер сайта, модель ' + config.model + '. API-ключ хранится на сервере.'
+    : 'ИИ пока не подключён: администратору нужно настроить серверный API-ключ.';
+  $('#btn-ai-columns').disabled = !config.aiReady;
+  $('#btn-ai-mo').disabled = !config.aiReady;
+}).catch(() => { $('#ai-status').textContent = 'Не удалось проверить подключение к серверу.'; });
 
 setStep(1);

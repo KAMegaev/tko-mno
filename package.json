@@ -5,10 +5,12 @@
   "description": "Расчёт мест накопления отходов: агрегация реестра МНО и заполнение шаблона приложения 8.2",
   "type": "module",
   "scripts": {
-    "serve": "python3 -m http.server 8765 --bind 127.0.0.1",
+    "serve": "node server/index.js",
     "check": "node tools/run.mjs",
     "e2e": "node tools/e2e.mjs",
-    "shots": "node tools/shots.mjs"
+    "shots": "node tools/shots.mjs",
+    "start": "node server/index.js",
+    "test:server": "node --test server/test/*.test.js"
   },
   "devDependencies": {
     "playwright": "^1.49.1"

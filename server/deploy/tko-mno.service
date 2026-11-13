@@ -1,0 +1,28 @@
+[Unit]
+Description=MNO web application and OpenAI backend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=tko-mno
+Group=tko-mno
+WorkingDirectory=/opt/tko-mno
+EnvironmentFile=/etc/tko-mno.env
+ExecStart=/opt/tko-node/bin/node --max-old-space-size=256 /opt/tko-mno/server/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+StateDirectory=tko-mno
+StateDirectoryMode=0700
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+UMask=0077
+MemoryMax=512M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

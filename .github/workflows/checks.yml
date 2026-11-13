@@ -1,9 +1,13 @@
-name: Проверки
+name: Проверки и деплой МНО
 
 on:
   push:
     branches: [main, 'claude/**']
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   e2e:
@@ -13,12 +17,51 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm ci || npm install
-      - run: npx playwright install --with-deps chromium
-      - name: Прогон расчёта в Node
-        run: OUT=/tmp/out.xlsx node tools/run.mjs
-      - name: Сквозная проверка в браузере
+          cache: npm
+      - run: npm ci
+      - name: Синтаксис серверных файлов и скриптов
         run: |
-          python3 -m http.server 8765 --bind 127.0.0.1 &
-          sleep 2
+          for file in server/*.js server/test/*.js src/ai/client.js src/ui/app.js; do node --check "$file"; done
+          bash -n server/deploy/install.sh server/deploy/github-deploy.sh server/deploy/setup-github.sh
+      - name: Исходный алгоритм расчёта
+        run: OUT=/tmp/out.xlsx node tools/run.mjs
+      - name: Сервер, файлы, сессии и OpenAI без реального ключа
+        run: node --test server/test/*.test.js
+      - run: npx playwright install --with-deps chromium
+      - name: Сквозная проверка браузер → сервер → готовый Excel
+        run: |
+          PUBLIC_ORIGIN=http://127.0.0.1:8765 PORT=8765 node server/index.js > /tmp/mno-server.log 2>&1 &
+          mno_pid=$!
+          trap 'kill "$mno_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8765/healthz; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8765/healthz
           OUT=/tmp/e2e.xlsx node tools/e2e.mjs
+
+  deploy:
+    needs: e2e
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/claude/waste-accumulation-calculator-t45mxe' && vars.MNO_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: mno-vps
+      cancel-in-progress: false
+    env:
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+    steps:
+      - name: Обновить МНО на VPS через ограниченный SSH-доступ
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VPS_SSH_KEY"
+          test -n "$VPS_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          (umask 077; printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/mno-deploy")
+          (umask 077; printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts")
+          trap 'rm -f "$HOME/.ssh/mno-deploy"' EXIT
+          ssh -T -i "$HOME/.ssh/mno-deploy" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o HostKeyAlgorithms=ssh-ed25519 -o ConnectTimeout=20 \
+            mno-deploy@185.200.179.49
