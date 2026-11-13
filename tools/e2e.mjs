@@ -101,7 +101,7 @@ await page.click('.step[data-step="4"] [data-goto="3"]');
 await page.click('.step[data-step="3"] [data-goto="2"]');
 allowAi = true;
 await page.click('#btn-ai-columns');
-await page.waitForFunction(() => !document.querySelector('#btn-ai-columns').classList.contains('is-busy'));
+await page.locator('#btn-ai-columns:not(.is-busy)').waitFor({ state: 'visible' });
 assert.equal(aiPayloads.length, 2);
 for (const payload of aiPayloads) {
   assert.deepEqual(Object.keys(payload).sort(), ['table', 'task', 'titles']);
