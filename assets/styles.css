@@ -218,3 +218,12 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   .stepper .name { display: none; }
   .stepper li { padding: 7px; }
 }
+
+/* Значок сайта --------------------------------------------------------- */
+.masthead .brand { display: flex; align-items: center; gap: 20px; }
+.brand-icon { display: block; width: 128px; height: 128px; flex: 0 0 auto; object-fit: contain; }
+.brand-copy { min-width: 0; }
+@media (max-width: 640px) {
+  .masthead .brand { gap: 12px; align-items: flex-start; }
+  .brand-icon { width: 80px; height: 80px; }
+}
