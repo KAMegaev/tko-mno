@@ -58,7 +58,23 @@ jobs:
           test -n "$VPS_SSH_KEY"
           test -n "$VPS_KNOWN_HOSTS"
           install -d -m 700 "$HOME/.ssh"
-          (umask 077; printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/mno-deploy")
+          python3 - <<'PY'
+          import os, pathlib
+          value = os.environ['VPS_SSH_KEY'].replace('\r\n', '\n').replace('\r', '\n').strip()
+          if '\\n' in value and '\n' not in value:
+              value = value.replace('\\n', '\n')
+          if not value.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') or not value.endswith('-----END OPENSSH PRIVATE KEY-----'):
+              raise SystemExit('VPS_SSH_KEY: нужен полный приватный OpenSSH-ключ, включая строки BEGIN и END. Публичный ключ и путь к файлу не подходят.')
+          target = pathlib.Path.home() / '.ssh' / 'mno-deploy'
+          descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+          with os.fdopen(descriptor, 'w') as output:
+              output.write(value + '\n')
+          PY
+          if ! ssh-keygen -y -P '' -f "$HOME/.ssh/mno-deploy" >/dev/null 2>/dev/null; then
+            echo '::error::VPS_SSH_KEY: содержимое приватного ключа повреждено или ключ защищён паролем.'
+            rm -f "$HOME/.ssh/mno-deploy"
+            exit 1
+          fi
           (umask 077; printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts")
           trap 'rm -f "$HOME/.ssh/mno-deploy"' EXIT
           ssh -T -i "$HOME/.ssh/mno-deploy" \
