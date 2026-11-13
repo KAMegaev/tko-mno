@@ -1,5 +1,6 @@
 // Сквозная проверка страницы в браузере: загрузка → столбцы → соответствия → файл.
 import { chromium } from 'playwright';
+import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -17,6 +18,21 @@ const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 
+// Блокируем backend на время работы с файлами. Это проверяет отсутствие загрузок.
+const aiPayloads = [];
+let allowAi = false;
+await page.route('**/api/**', async route => {
+  const url = new URL(route.request().url());
+  if (url.pathname === '/api/config') {
+    await route.fulfill({ json: { aiReady: true, model: 'test-model', processing: 'local' } });
+  } else if (allowAi && url.pathname === '/api/ai') {
+    aiPayloads.push(route.request().postDataJSON());
+    await route.fulfill({ json: { columns: [] } });
+  } else {
+    errors.push('Запрещённая передача данных: ' + url.pathname);
+    await route.abort();
+  }
+});
 await page.goto(BASE, { waitUntil: 'networkidle' });
 
 await page.setInputFiles('[data-drop="registry"] input', path.join(root, 'tools/testdata/registry.xlsx'));
@@ -77,6 +93,24 @@ const [reportDl] = await Promise.all([
 ]);
 await reportDl.saveAs(OUT.replace(/\.xlsx$/, '.txt'));
 console.log('— отчёт:', reportDl.suggestedFilename());
+
+// До явного нажатия ИИ никаких данных на сервер не передаётся.
+assert.equal(aiPayloads.length, 0);
+assert.equal(errors.length, 0, errors.join('\n'));
+await page.click('.step[data-step="4"] [data-goto="3"]');
+await page.click('.step[data-step="3"] [data-goto="2"]');
+allowAi = true;
+await page.click('#btn-ai-columns');
+await page.waitForFunction(() => !document.querySelector('#btn-ai-columns').classList.contains('is-busy'));
+assert.equal(aiPayloads.length, 2);
+for (const payload of aiPayloads) {
+  assert.deepEqual(Object.keys(payload).sort(), ['table', 'task', 'titles']);
+  assert.equal(payload.task, 'columns');
+  assert.ok(['template', 'registry'].includes(payload.table));
+  assert.ok(Array.isArray(payload.titles));
+  assert.ok(payload.titles.every(title => typeof title === 'string'));
+}
+console.log('Локальная обработка без backend: OK. ИИ получает только заголовки: OK.');
 
 if (errors.length) { console.log('— ОШИБКИ В БРАУЗЕРЕ —'); errors.forEach((e) => console.log('  ', e)); }
 await browser.close();
